@@ -193,14 +193,14 @@ public class SMTPServer {
             return false;
         }
     }
-    
+
     // Save the email content to a file for each recipient using RFC5322 format
     private void saveEmail(String emailBodyContent) {
         // Build a minimal RFC5322 header using the stored sender and recipients
         String dateHeader = DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneId.of("GMT")));
         String header = "From: " + sender + "\n" +
                         "To: " + String.join(", ", recipients) + "\n" +
-                        "Subject: Project Update\n" +
+                        //"Subject: Project Update\n" +
                         "Date: " + dateHeader + "\n\n";
         String fullEmail = header + emailBodyContent;
         
@@ -223,10 +223,5 @@ public class SMTPServer {
                 System.err.println("Error saving email for " + recipient + ": " + e.getMessage());
             }
         }
-    }
-    
-    public static void main(String[] args) {
-        SMTPServer server = new SMTPServer();
-        server.start();
     }
 }
