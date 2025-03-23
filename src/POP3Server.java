@@ -93,7 +93,7 @@ public class POP3Server {
             } else if ((m = passPattern.matcher(command)).matches()) {
                 handlePass(m, out);
             } else {
-                out.println("-ERR Command not allowed in AUTHORIZATION state");
+                out.println("-ERR Command not allowed");
             }
         } else if (state == State.TRANSACTION) {
             if ((m = statPattern.matcher(command)).matches()) {
@@ -258,7 +258,19 @@ public class POP3Server {
     }
 
     private void handleQuit(PrintWriter out) {
+        // If we are in TRANSACTION state, delete the marked messages from disk
+        if (state == State.TRANSACTION) {
+            for (Integer msgNum : deletedMessages) {
+                try {
+                    // Note: msgNum is 1-based indexing.
+                    Files.deleteIfExists(messages.get(msgNum - 1));
+                } catch (IOException e) {
+                    System.err.println("Failed to delete message " + msgNum + ": " + e.getMessage());
+                }
+            }
+        }
         out.println("+OK Goodbye");
         state = State.UPDATE;
     }
+    
 }

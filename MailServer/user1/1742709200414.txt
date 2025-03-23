@@ -1,0 +1,5 @@
+From: user3@example.com
+To: user2@example.com, user1@example.com
+Date: Sun, 23 Mar 2025 05:53:20 GMT
+
+test with multiple receipients
