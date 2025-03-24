@@ -58,14 +58,9 @@ public class SMTPServer {
     public void start() {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             System.out.println("SMTPServer Starting ......");
-            while (true) {
-                try (
-                    Socket clientSocket = serverSocket.accept();
-                ) {
-                    handleClient(clientSocket);
-                } catch (IOException e) {
-                    System.err.println("Connection error: " + e.getMessage());
-                }//sudo git commit -m "we change some sturcture in the code creating a seperate function that will handle the client we will parralise it later on"
+            while (true) {                
+                Socket clientSocket = serverSocket.accept();
+                threadPool.execute(() -> handleClient(clientSocket));
             }
         } catch (IOException e) {
             System.err.println("Server error: " + e.getMessage());

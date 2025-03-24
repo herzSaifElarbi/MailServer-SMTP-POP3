@@ -51,13 +51,8 @@ public class POP3Server {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             System.out.println("POP3Server started on port " + port);
             while (true) {
-                try (Socket clientSocket = serverSocket.accept();
-                     ) {
+                    Socket clientSocket = serverSocket.accept();
                     handleClient(clientSocket);
-
-                } catch (IOException e) {
-                    System.err.println("Client connection error: " + e.getMessage());
-                }
             }
         } catch (IOException e) {
             System.err.println("Server error: " + e.getMessage());
