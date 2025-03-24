@@ -13,6 +13,8 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -46,6 +48,8 @@ public class SMTPServer {
     private final Pattern noopPattern = Pattern.compile("(?i)^NOOP$");
     private final Pattern quitPattern = Pattern.compile("(?i)^QUIT$");
 
+    private final ExecutorService threadPool = Executors.newFixedThreadPool(10); //number of threads = 10
+
     public SMTPServer() {
         this.port = 25;
         this.mailDir = Paths.get("MailServer");
@@ -57,24 +61,33 @@ public class SMTPServer {
             while (true) {
                 try (
                     Socket clientSocket = serverSocket.accept();
-                    BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-                    PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)
                 ) {
-                    resetSession();
-                    out.println("220 " + fqdnServer + " Welcome to SMTP Server");
-
-                    String command;
-                    while ((command = in.readLine()) != null) {
-                        if (!processCommand(command, in, out)) {
-                            break; // Quitter la boucle si la session est fermée
-                        }
-                    }
+                    handleClient(clientSocket);
                 } catch (IOException e) {
                     System.err.println("Connection error: " + e.getMessage());
-                }
+                }//sudo git commit -m "we change some sturcture in the code creating a seperate function that will handle the client we will parralise it later on"
             }
         } catch (IOException e) {
             System.err.println("Server error: " + e.getMessage());
+        }
+    }
+    private void handleClient(Socket clientSocket){
+        try(
+            BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+            PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)
+        ){
+            resetSession();
+            out.println("220 " + fqdnServer + " Welcome to SMTP Server");
+            String command;
+            while ((command = in.readLine()) != null) {
+                if (!processCommand(command, in, out)) {
+                    break; // Quitter la boucle si la session est fermée
+                }
+            }
+
+        }
+        catch (IOException e) {
+            System.err.println("Error handling client: " + e.getMessage());
         }
     }
 

@@ -52,23 +52,29 @@ public class POP3Server {
             System.out.println("POP3Server started on port " + port);
             while (true) {
                 try (Socket clientSocket = serverSocket.accept();
-                     BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-                     PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)) {
-                    
-                    resetSession();
-                    out.println("+OK " + fqdnServer + " POP3 server ready");
+                     ) {
+                    handleClient(clientSocket);
 
-                    String command;
-                    while ((command = in.readLine()) != null) {
-                        if (!processCommand(command, out)) {
-                            break;
-                        }
-                    }
                 } catch (IOException e) {
                     System.err.println("Client connection error: " + e.getMessage());
                 }
             }
         } catch (IOException e) {
+            System.err.println("Server error: " + e.getMessage());
+        }
+    }
+    private void handleClient(Socket clientSocket){
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+        PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)){
+            resetSession();
+            out.println("+OK " + fqdnServer + " POP3 server ready");
+            String command;
+            while ((command = in.readLine()) != null) {
+                if (!processCommand(command, out)) {
+                    break;
+                }
+            }
+        } catch (Exception e) {
             System.err.println("Server error: " + e.getMessage());
         }
     }
