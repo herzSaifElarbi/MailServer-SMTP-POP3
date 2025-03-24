@@ -1,45 +1,28 @@
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
+import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.*;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.regex.*;
 
 public class SMTPServer {
-    private int port;
-    private Path mailDir;
-    private String fqdnServer = "mail.example.net"; // Nom de domaine du serveur
+    private final int port;
+    private final Path mailDir;
+    private final String fqdnServer = "mail.example.net"; 
 
-    // Variables pour stocker l'expéditeur, les destinataires et l'utilisateur HELO
-    private String heloUser;
-    private String sender;
-    private List<String> recipients = new ArrayList<>();
+    private final ExecutorService threadPool = Executors.newFixedThreadPool(10); // Handle multiple clients
 
-    // États de session SMTP
-    private enum State {
-        CONNECTED,    // Connexion établie, attente HELO/EHLO
-        GREETED,      // HELO/EHLO reçu et validé
-        MAIL_FROM,    // MAIL FROM reçu et validé
-        RCPT_TO,      // Au moins un RCPT TO reçu
-        DATA_INPUT    // Mode DATA en cours
+    // SMTP Session states
+    enum State {
+        CONNECTED, GREETED, MAIL_FROM, RCPT_TO, DATA_INPUT
     }
 
-    private State state = State.CONNECTED;
-
-    // Expressions régulières pour les commandes SMTP
+    // SMTP Command patterns
     private final Pattern heloEhloPattern = Pattern.compile("(?i)^(HELO|EHLO)\\s+([^\\s]+)$");
     private final Pattern mailFromPattern = Pattern.compile("(?i)^MAIL FROM:<([^<>\\s]+@([^<>\\s]+))>$");
     private final Pattern rcptToPattern = Pattern.compile("(?i)^RCPT TO:<([^<>\\s]+@[^<>\\s]+\\.[a-zA-Z]{2,})>$");
@@ -48,8 +31,6 @@ public class SMTPServer {
     private final Pattern noopPattern = Pattern.compile("(?i)^NOOP$");
     private final Pattern quitPattern = Pattern.compile("(?i)^QUIT$");
 
-    private final ExecutorService threadPool = Executors.newFixedThreadPool(10); //number of threads = 10
-
     public SMTPServer() {
         this.port = 25;
         this.mailDir = Paths.get("MailServer");
@@ -57,8 +38,8 @@ public class SMTPServer {
 
     public void start() {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
-            System.out.println("SMTPServer Starting ......");
-            while (true) {                
+            System.out.println("SMTPServer started on port " + port);
+            while (true) {
                 Socket clientSocket = serverSocket.accept();
                 threadPool.execute(() -> handleClient(clientSocket));
             }
@@ -66,79 +47,52 @@ public class SMTPServer {
             System.err.println("Server error: " + e.getMessage());
         }
     }
-    private void handleClient(Socket clientSocket){
-        try(
+
+    private void handleClient(Socket clientSocket) {
+        SMTPSession session = new SMTPSession(); // Each client gets its own session
+        try (
             BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
             PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)
-        ){
-            resetSession();
+        ) {
             out.println("220 " + fqdnServer + " Welcome to SMTP Server");
+
             String command;
             while ((command = in.readLine()) != null) {
-                if (!processCommand(command, in, out)) {
-                    break; // Quitter la boucle si la session est fermée
+                if (!processCommand(command, in, out, session)) {
+                    break;
                 }
             }
-
-        }
-        catch (IOException e) {
+        } catch (IOException e) {
             System.err.println("Error handling client: " + e.getMessage());
         }
     }
 
-    private void resetSession() {
-        heloUser = null;
-        sender = null;
-        recipients.clear();
-        state = State.CONNECTED;
-    }
-
-    private boolean processCommand(String command, BufferedReader in, PrintWriter out) {
+    private boolean processCommand(String command, BufferedReader in, PrintWriter out, SMTPSession session) {
         try {
             Matcher matcher;
 
-            // HELO/EHLO
             if ((matcher = heloEhloPattern.matcher(command)).matches()) {
-                if (state != State.CONNECTED) {
+                if (session.state != State.CONNECTED) {
                     out.println("503 Bad sequence of commands");
                     return true;
                 }
-                String user = matcher.group(2); 
-                Path userDir = mailDir.resolve(user);
-
-                if (!Files.exists(userDir)) {
-                    out.println("550 User not found");
-                    return true;
-                }
-
-                heloUser = user;
-                state = State.GREETED;
-                out.println("250 " + fqdnServer + " Hello " + user);
+                session.heloUser = matcher.group(2);
+                session.state = State.GREETED;
+                out.println("250 " + fqdnServer + " Hello " + session.heloUser);
             }
 
-            // MAIL FROM
             else if ((matcher = mailFromPattern.matcher(command)).matches()) {
-                if (state != State.GREETED) {
+                if (session.state != State.GREETED) {
                     out.println("503 Bad sequence of commands");
                     return true;
                 }
-
-                String emailSender = matcher.group(1);
-                String domain = matcher.group(2);
-
-                if (!emailSender.startsWith(heloUser + "@")) {
-                    out.println("550 Sender does not match HELO domain");
-                    return true;
-                }
-
-                sender = emailSender;
-                state = State.MAIL_FROM;
+                session.sender = matcher.group(1);
+                session.state = State.MAIL_FROM;
                 out.println("250 OK");
             }
 
-            // RCPT TO
             else if ((matcher = rcptToPattern.matcher(command)).matches()) {
-                if (state != State.MAIL_FROM && state != State.RCPT_TO) {
+                if (session.state != State.MAIL_FROM && session.state != State.RCPT_TO) {
                     out.println("503 Bad sequence of commands");
                     return true;
                 }
@@ -149,19 +103,18 @@ public class SMTPServer {
                 if (!Files.exists(userDir)) {
                     out.println("550 User not found");
                 } else {
-                    recipients.add(recipient);
-                    state = State.RCPT_TO;
+                    session.recipients.add(recipient);
+                    session.state = State.RCPT_TO;
                     out.println("250 OK");
                 }
             }
 
-            // DATA
             else if ((matcher = dataPattern.matcher(command)).matches()) {
-                if (state != State.RCPT_TO) {
+                if (session.state != State.RCPT_TO) {
                     out.println("503 Bad sequence of commands");
                     return true;
                 }
-                state = State.DATA_INPUT;
+                session.state = State.DATA_INPUT;
                 out.println("354 Start mail input; end with <CRLF>.<CRLF>");
                 StringBuilder emailBody = new StringBuilder();
                 String line;
@@ -170,31 +123,25 @@ public class SMTPServer {
                     emailBody.append(line).append("\n");
                 }
 
-                saveEmail(emailBody.toString());
+                saveEmail(session.sender, session.recipients, emailBody.toString());
                 out.println("250 Message accepted");
-                state = State.GREETED;
+                session.state = State.GREETED;
             }
 
-            // RSET
             else if ((matcher = rsetPattern.matcher(command)).matches()) {
-                sender = null;
-                recipients.clear();
-                state = State.GREETED;
+                session.reset();
                 out.println("250 Reset OK");
             }
 
-            // NOOP
             else if ((matcher = noopPattern.matcher(command)).matches()) {
                 out.println("250 OK");
             }
 
-            // QUIT
             else if ((matcher = quitPattern.matcher(command)).matches()) {
                 out.println("221 Bye");
                 return false;
             }
 
-            // Commande inconnue
             else {
                 out.println("500 Syntax error, command unrecognized");
             }
@@ -205,7 +152,7 @@ public class SMTPServer {
         }
     }
 
-    private void saveEmail(String emailBodyContent) {
+    private synchronized void saveEmail(String sender, List<String> recipients, String emailBodyContent) {
         String dateHeader = DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneId.of("GMT")));
         String header = "From: " + sender + "\n" +
                         "To: " + String.join(", ", recipients) + "\n" +
@@ -217,6 +164,10 @@ public class SMTPServer {
                 String user = recipient.substring(0, recipient.indexOf("@"));
                 Path userDir = mailDir.resolve(user);
 
+                if (!Files.exists(userDir)) {
+                    Files.createDirectories(userDir);
+                }
+
                 String fileName = System.currentTimeMillis() + ".txt";
                 Path emailFile = userDir.resolve(fileName);
                 Files.write(emailFile, fullEmail.getBytes(StandardCharsets.UTF_8));
@@ -224,6 +175,20 @@ public class SMTPServer {
             } catch (IOException e) {
                 System.err.println("Error saving email for " + recipient + ": " + e.getMessage());
             }
+        }
+    }
+
+    private static class SMTPSession {
+        String heloUser;
+        String sender;
+        List<String> recipients = new ArrayList<>();
+        State state = State.CONNECTED;
+
+        void reset() {
+            heloUser = null;
+            sender = null;
+            recipients.clear();
+            state = State.CONNECTED;
         }
     }
 

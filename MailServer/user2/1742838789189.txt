@@ -1,0 +1,5 @@
+From: user1@exemple.com
+To: user2@example.com
+Date: Mon, 24 Mar 2025 17:53:09 GMT
+
+this is a test
