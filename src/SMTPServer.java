@@ -15,7 +15,7 @@ public class SMTPServer {
     private final Path mailDir;
     private final String fqdnServer = "mail.example.net"; 
 
-    private final ExecutorService threadPool = Executors.newFixedThreadPool(10); // Handle multiple clients
+    private final ExecutorService threadPool = Executors.newFixedThreadPool(2); // Handle multiple clients
 
     // SMTP Session states
     enum State {

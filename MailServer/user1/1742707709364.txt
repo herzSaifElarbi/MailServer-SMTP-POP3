@@ -1,6 +1,0 @@
-From: user2@mail.com
-To: user1@mail.com, user3@scholl.com
-Date: Sun, 23 Mar 2025 05:28:29 GMT
-
-this is just a test!
-end
