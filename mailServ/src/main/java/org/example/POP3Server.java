@@ -1,3 +1,5 @@
+package org.example;
+
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -45,8 +47,8 @@ public class POP3Server {
     private void handleClient(Socket clientSocket) {
         POP3Session session = new POP3Session(); // Each client gets its own session
         try (
-            BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-            PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)
+                BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)
         ) {
             out.println("+OK " + fqdnServer + " POP3 server ready");
 
@@ -126,7 +128,7 @@ public class POP3Server {
         try {
             List<String> lines = Files.readAllLines(passwordFile);
             boolean validPassword = lines.stream().anyMatch(line ->
-                line.startsWith(session.username + ":") && line.split(":")[1].equals(enteredPassword));
+                    line.startsWith(session.username + ":") && line.split(":")[1].equals(enteredPassword));
 
             if (validPassword) {
                 session.state = State.TRANSACTION;

@@ -1,3 +1,5 @@
+package org.example;
+
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -13,7 +15,7 @@ import java.util.regex.*;
 public class SMTPServer {
     private final int port;
     private final Path mailDir;
-    private final String fqdnServer = "mail.example.net"; 
+    private final String fqdnServer = "mail.example.net";
 
     private final ExecutorService threadPool = Executors.newFixedThreadPool(2); // Handle multiple clients
 
@@ -51,8 +53,8 @@ public class SMTPServer {
     private void handleClient(Socket clientSocket) {
         SMTPSession session = new SMTPSession(); // Each client gets its own session
         try (
-            BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-            PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)
+                BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)
         ) {
             out.println("220 " + fqdnServer + " Welcome to SMTP Server");
 
@@ -155,8 +157,8 @@ public class SMTPServer {
     private synchronized void saveEmail(String sender, List<String> recipients, String emailBodyContent) {
         String dateHeader = DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneId.of("GMT")));
         String header = "From: " + sender + "\n" +
-                        "To: " + String.join(", ", recipients) + "\n" +
-                        "Date: " + dateHeader + "\n\n";
+                "To: " + String.join(", ", recipients) + "\n" +
+                "Date: " + dateHeader + "\n\n";
         String fullEmail = header + emailBodyContent;
 
         for (String recipient : recipients) {
