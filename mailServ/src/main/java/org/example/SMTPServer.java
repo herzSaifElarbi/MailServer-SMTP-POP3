@@ -138,17 +138,24 @@ public class SMTPServer {
 
         String recipient = matcher.group(1);
         String username = recipient.substring(0, recipient.indexOf("@"));
-        Path userDir = mailDir.resolve(username);
 
-        if (!Files.exists(userDir)) {
-            out.println("550 Recipient not found");
+        try {
+            Registry registry = LocateRegistry.getRegistry("localhost", 1099);
+            AuthService authService = (AuthService) registry.lookup("AuthService");
+
+            if (!authService.userExists(username)) {
+                out.println("550 Recipient not found");
+                return true;
+            }
+
+            session.recipients.add(recipient);
+            session.state = State.RCPT_TO;
+            out.println("250 Recipient OK");
+            return true;
+        } catch (Exception e) {
+            out.println("451 Authentication service unavailable");
             return true;
         }
-
-        session.recipients.add(recipient);
-        session.state = State.RCPT_TO;
-        out.println("250 Recipient OK");
-        return true;
     }
 
     private boolean handleData(BufferedReader in, PrintWriter out, SMTPSession session) throws IOException {
