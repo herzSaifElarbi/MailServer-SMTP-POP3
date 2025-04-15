@@ -9,7 +9,22 @@ import java.util.*;
 public class AuthServiceImpl extends UnicastRemoteObject implements AuthService {
     private final Path userDB = Paths.get("MailServer/users.json");
     private final Path mailDir = Paths.get("MailServer");
+    @Override
+    public boolean userExists(String username) throws RemoteException {
+        try {
+            String json = Files.readString(userDB);
+            JsonArray users = JsonParser.parseString(json).getAsJsonArray();
 
+            for (JsonElement user : users) {
+                if (user.getAsJsonObject().get("username").getAsString().equals(username)) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (IOException e) {
+            throw new RemoteException("Error reading user database");
+        }
+    }
     public AuthServiceImpl() throws RemoteException {
         super();
         try {

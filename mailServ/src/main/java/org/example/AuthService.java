@@ -3,6 +3,7 @@ import java.rmi.Remote;
 import java.rmi.RemoteException;
 
 public interface AuthService extends Remote {
+    boolean userExists(String username) throws RemoteException;
     boolean authenticate(String username, String password) throws RemoteException;
     boolean createUser(String username, String password) throws RemoteException;
     boolean deleteUser(String username) throws RemoteException;
