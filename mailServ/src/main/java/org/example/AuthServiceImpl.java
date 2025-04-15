@@ -8,15 +8,17 @@ import java.util.*;
 
 public class AuthServiceImpl extends UnicastRemoteObject implements AuthService {
     private final Path userDB = Paths.get("MailServer/users.json");
+    private final Path mailDir = Paths.get("MailServer");
 
     public AuthServiceImpl() throws RemoteException {
         super();
-        if (!Files.exists(userDB)) {
-            try {
-                Files.write(userDB, "[]".getBytes()); // Initialize empty JSON array
-            } catch (IOException e) {
-                throw new RemoteException("Failed to initialize user database");
+        try {
+            if (!Files.exists(userDB)) {
+                Files.createDirectories(mailDir);  // Ensure MailServer exists
+                Files.write(userDB, "[]".getBytes());
             }
+        } catch (IOException e) {
+            throw new RemoteException("Failed to initialize user database");
         }
     }
 
@@ -42,17 +44,23 @@ public class AuthServiceImpl extends UnicastRemoteObject implements AuthService 
     @Override
     public boolean createUser(String username, String password) throws RemoteException {
         try {
+            // Check if user already exists
             String json = Files.readString(userDB);
             JsonArray users = JsonParser.parseString(json).getAsJsonArray();
 
-            // Check if user already exists
             for (JsonElement user : users) {
                 if (user.getAsJsonObject().get("username").getAsString().equals(username)) {
                     return false;
                 }
             }
 
-            // Add new user
+            // Create user directory
+            Path userDir = mailDir.resolve(username);
+            if (!Files.exists(userDir)) {
+                Files.createDirectory(userDir);
+            }
+
+            // Add to JSON database
             JsonObject newUser = new JsonObject();
             newUser.addProperty("username", username);
             newUser.addProperty("password", password);
@@ -61,7 +69,7 @@ public class AuthServiceImpl extends UnicastRemoteObject implements AuthService 
             Files.write(userDB, new Gson().toJson(users).getBytes());
             return true;
         } catch (IOException e) {
-            throw new RemoteException("Error updating user database");
+            throw new RemoteException("Error creating user: " + e.getMessage());
         }
     }
 
@@ -73,6 +81,7 @@ public class AuthServiceImpl extends UnicastRemoteObject implements AuthService 
             JsonArray updatedUsers = new JsonArray();
             boolean found = false;
 
+            // Remove from JSON
             for (JsonElement user : users) {
                 JsonObject userObj = user.getAsJsonObject();
                 if (!userObj.get("username").getAsString().equals(username)) {
@@ -83,12 +92,19 @@ public class AuthServiceImpl extends UnicastRemoteObject implements AuthService 
             }
 
             if (found) {
+                // Delete mail directory
+                Path userDir = mailDir.resolve(username);
+                if (Files.exists(userDir)) {
+                    deleteDirectoryRecursively(userDir);
+                }
+
+                // Update database
                 Files.write(userDB, new Gson().toJson(updatedUsers).getBytes());
                 return true;
             }
             return false;
         } catch (IOException e) {
-            throw new RemoteException("Error updating user database");
+            throw new RemoteException("Error deleting user: " + e.getMessage());
         }
     }
 
@@ -114,7 +130,18 @@ public class AuthServiceImpl extends UnicastRemoteObject implements AuthService 
             }
             return false;
         } catch (IOException e) {
-            throw new RemoteException("Error updating user database");
+            throw new RemoteException("Error updating password");
         }
+    }
+
+    private void deleteDirectoryRecursively(Path path) throws IOException {
+        if (Files.isDirectory(path)) {
+            try (DirectoryStream<Path> entries = Files.newDirectoryStream(path)) {
+                for (Path entry : entries) {
+                    deleteDirectoryRecursively(entry);
+                }
+            }
+        }
+        Files.delete(path);
     }
 }
