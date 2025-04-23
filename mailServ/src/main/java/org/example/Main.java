@@ -16,6 +16,7 @@ public class Main {
             });
 
             // Start both servers
+
             smtpThread.start();
             pop3Thread.start();
     }
