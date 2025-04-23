@@ -8,6 +8,7 @@ public class DBUtil {
     private static final String USER = "root"; // adjust this
     private static final String PASS = "Amin@07032001"; // adjust this
 
+
     static {
         try {
             Class.forName("com.mysql.cj.jdbc.Driver");
