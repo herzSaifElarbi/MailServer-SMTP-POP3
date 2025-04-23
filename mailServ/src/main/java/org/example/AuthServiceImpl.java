@@ -1,162 +1,81 @@
 package org.example;
-import java.io.IOException;
 import java.rmi.RemoteException;
 import java.rmi.server.UnicastRemoteObject;
-import java.nio.file.*;
-import com.google.gson.*;
-import java.util.*;
-
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 public class AuthServiceImpl extends UnicastRemoteObject implements AuthService {
-    private final Path userDB = Paths.get("MailServer/users.json");
-    private final Path mailDir = Paths.get("MailServer");
-    @Override
-    public boolean userExists(String username) throws RemoteException {
-        try {
-            String json = Files.readString(userDB);
-            JsonArray users = JsonParser.parseString(json).getAsJsonArray();
-
-            for (JsonElement user : users) {
-                if (user.getAsJsonObject().get("username").getAsString().equals(username)) {
-                    return true;
-                }
-            }
-            return false;
-        } catch (IOException e) {
-            throw new RemoteException("Error reading user database");
-        }
-    }
     public AuthServiceImpl() throws RemoteException {
         super();
-        try {
-            if (!Files.exists(userDB)) {
-                Files.createDirectories(mailDir);  // Ensure MailServer exists
-                Files.write(userDB, "[]".getBytes());
+    }
+    @Override
+    public boolean userExists(String username) throws RemoteException {
+        String sql = "SELECT COUNT(*) FROM users WHERE username = ?";
+        try (Connection c = DBUtil.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, username);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getInt(1) > 0;
             }
-        } catch (IOException e) {
-            throw new RemoteException("Failed to initialize user database");
+        } catch (SQLException e) {
+            throw new RemoteException("DB error in userExists", e);
         }
     }
-
     @Override
     public boolean authenticate(String username, String password) throws RemoteException {
-        try {
-            String json = Files.readString(userDB);
-            JsonArray users = JsonParser.parseString(json).getAsJsonArray();
-
-            for (JsonElement user : users) {
-                JsonObject userObj = user.getAsJsonObject();
-                if (userObj.get("username").getAsString().equals(username) &&
-                        userObj.get("password").getAsString().equals(password)) {
-                    return true;
-                }
-            }
-            return false;
-        } catch (IOException e) {
-            throw new RemoteException("Error reading user database");
-        }
-    }
-
-    @Override
-    public boolean createUser(String username, String password) throws RemoteException {
-        try {
-            // Check if user already exists
-            String json = Files.readString(userDB);
-            JsonArray users = JsonParser.parseString(json).getAsJsonArray();
-
-            for (JsonElement user : users) {
-                if (user.getAsJsonObject().get("username").getAsString().equals(username)) {
+        String sql = "SELECT password FROM users WHERE username = ?";
+        try (Connection c = DBUtil.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, username);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
                     return false;
                 }
+                return password.equals(rs.getString("password"));
             }
-
-            // Create user directory
-            Path userDir = mailDir.resolve(username);
-            if (!Files.exists(userDir)) {
-                Files.createDirectory(userDir);
-            }
-
-            // Add to JSON database
-            JsonObject newUser = new JsonObject();
-            newUser.addProperty("username", username);
-            newUser.addProperty("password", password);
-            users.add(newUser);
-
-            Files.write(userDB, new Gson().toJson(users).getBytes());
-            return true;
-        } catch (IOException e) {
-            throw new RemoteException("Error creating user: " + e.getMessage());
+        } catch (SQLException e) {
+            throw new RemoteException("DB error in authenticate", e);
         }
     }
-
     @Override
-    public boolean deleteUser(String username) throws RemoteException {
-        try {
-            String json = Files.readString(userDB);
-            JsonArray users = JsonParser.parseString(json).getAsJsonArray();
-            JsonArray updatedUsers = new JsonArray();
-            boolean found = false;
-
-            // Remove from JSON
-            for (JsonElement user : users) {
-                JsonObject userObj = user.getAsJsonObject();
-                if (!userObj.get("username").getAsString().equals(username)) {
-                    updatedUsers.add(userObj);
-                } else {
-                    found = true;
-                }
+    public boolean createUser(String username, String password) throws RemoteException {
+        String sql = "INSERT INTO users(username,password) VALUES(?,?)";
+        try (Connection c = DBUtil.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, username);
+            ps.setString(2, password);
+            return ps.executeUpdate() == 1;
+        } catch (SQLException e) {
+            // Error code 1062 = duplicate entry
+            if (e.getErrorCode() == 1062) {
+                return false;
             }
-
-            if (found) {
-                // Delete mail directory
-                Path userDir = mailDir.resolve(username);
-                if (Files.exists(userDir)) {
-                    deleteDirectoryRecursively(userDir);
-                }
-
-                // Update database
-                Files.write(userDB, new Gson().toJson(updatedUsers).getBytes());
-                return true;
-            }
-            return false;
-        } catch (IOException e) {
-            throw new RemoteException("Error deleting user: " + e.getMessage());
+            throw new RemoteException("DB error in createUser", e);
         }
     }
-
     @Override
     public boolean updatePassword(String username, String newPassword) throws RemoteException {
-        try {
-            String json = Files.readString(userDB);
-            JsonArray users = JsonParser.parseString(json).getAsJsonArray();
-            boolean updated = false;
-
-            for (JsonElement user : users) {
-                JsonObject userObj = user.getAsJsonObject();
-                if (userObj.get("username").getAsString().equals(username)) {
-                    userObj.addProperty("password", newPassword);
-                    updated = true;
-                    break;
-                }
-            }
-
-            if (updated) {
-                Files.write(userDB, new Gson().toJson(users).getBytes());
-                return true;
-            }
-            return false;
-        } catch (IOException e) {
-            throw new RemoteException("Error updating password");
+        String sql = "UPDATE users SET password = ? WHERE username = ?";
+        try (Connection c = DBUtil.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, newPassword);
+            ps.setString(2, username);
+            return ps.executeUpdate() == 1;
+        } catch (SQLException e) {
+            throw new RemoteException("DB error in updatePassword", e);
         }
     }
-
-    private void deleteDirectoryRecursively(Path path) throws IOException {
-        if (Files.isDirectory(path)) {
-            try (DirectoryStream<Path> entries = Files.newDirectoryStream(path)) {
-                for (Path entry : entries) {
-                    deleteDirectoryRecursively(entry);
-                }
-            }
+    @Override
+    public boolean deleteUser(String username) throws RemoteException {
+        String sql = "DELETE FROM users WHERE username = ?";
+        try (Connection c = DBUtil.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, username);
+            return ps.executeUpdate() == 1;
+        } catch (SQLException e) {
+            throw new RemoteException("DB error in deleteUser", e);
         }
-        Files.delete(path);
     }
 }
