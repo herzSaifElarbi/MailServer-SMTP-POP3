@@ -1,230 +1,214 @@
 package org.example;
+
 import java.io.*;
 import java.net.*;
-import java.nio.file.*;
+import java.rmi.registry.*;
+import java.sql.*;
+import java.nio.charset.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.regex.*;
-import java.rmi.registry.*;
 
 public class POP3Server {
-    // Server configuration
     private final int port = 110;
-    private final Path mailDir = Paths.get("MailServer");
     private final String fqdnServer = "mail.example.com";
     private final ExecutorService threadPool = Executors.newFixedThreadPool(10);
 
-    // POP3 protocol states
-    private enum State { AUTHORIZATION, TRANSACTION, UPDATE }
+    // Session states
+    private enum State { AUTHORIZATION, TRANSACTION }
 
     // Command patterns
-    private final Pattern userPattern = Pattern.compile("(?i)^USER\\s+(\\S+)$");
-    private final Pattern passPattern = Pattern.compile("(?i)^PASS\\s+(.+)$");
-    private final Pattern statPattern = Pattern.compile("(?i)^STAT$");
-    private final Pattern listPattern = Pattern.compile("(?i)^LIST(?:\\s+(\\d+))?$");
-    private final Pattern retrPattern = Pattern.compile("(?i)^RETR\\s+(\\d+)$");
-    private final Pattern delePattern = Pattern.compile("(?i)^DELE\\s+(\\d+)$");
-    private final Pattern noopPattern = Pattern.compile("(?i)^NOOP$");
-    private final Pattern rsetPattern = Pattern.compile("(?i)^RSET$");
-    private final Pattern quitPattern = Pattern.compile("(?i)^QUIT$");
+    private static final Pattern USER_CMD = Pattern.compile("(?i)^USER\\s+(\\S+)$");
+    private static final Pattern PASS_CMD = Pattern.compile("(?i)^PASS\\s+(.+)$");
+    private static final Pattern STAT_CMD = Pattern.compile("(?i)^STAT$");
+    private static final Pattern LIST_CMD = Pattern.compile("(?i)^LIST(?:\\s+(\\d+))?$");
+    private static final Pattern RETR_CMD = Pattern.compile("(?i)^RETR\\s+(\\d+)$");
+    private static final Pattern DELE_CMD = Pattern.compile("(?i)^DELE\\s+(\\d+)$");
+    private static final Pattern NOOP_CMD = Pattern.compile("(?i)^NOOP$");
+    private static final Pattern RSET_CMD = Pattern.compile("(?i)^RSET$");
+    private static final Pattern QUIT_CMD = Pattern.compile("(?i)^QUIT$");
 
-
+    public static void main(String[] args) {
+        new POP3Server().start();
+    }
 
     public void start() {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             System.out.println("POP3 Server started on port " + port);
             while (true) {
-                Socket clientSocket = serverSocket.accept();
-                threadPool.execute(() -> handleClient(clientSocket));
+                Socket client = serverSocket.accept();
+                threadPool.execute(() -> handleClient(client));
             }
         } catch (IOException e) {
             System.err.println("Server error: " + e.getMessage());
         }
     }
 
-    private void handleClient(Socket clientSocket) {
+    private void handleClient(Socket client) {
         POP3Session session = new POP3Session();
-        try (
-                BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-                PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)
-        ) {
-            out.println("+OK " + fqdnServer + " POP3 server ready");
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
+             PrintWriter out = new PrintWriter(client.getOutputStream(), true)) {
 
-            String command;
-            while ((command = in.readLine()) != null) {
-                if (!processCommand(command, out, session)) {
-                    break;
-                }
+            out.println("+OK " + fqdnServer + " POP3 server ready");
+            String line;
+            while ((line = in.readLine()) != null) {
+                if (!processCommand(line, out, session)) break;
             }
         } catch (IOException e) {
             System.err.println("Client handling error: " + e.getMessage());
         } finally {
-            try {
-                clientSocket.close();
-            } catch (IOException e) {
-                System.err.println("Error closing client socket: " + e.getMessage());
-            }
+            try { client.close(); } catch (IOException ignored) {}
         }
     }
 
-    private boolean processCommand(String command, PrintWriter out, POP3Session session) {
-        Matcher matcher;
-
-        if ((matcher = quitPattern.matcher(command)).matches()) {
-            return handleQuit(out, session);
+    private boolean processCommand(String cmd, PrintWriter out, POP3Session s) {
+        Matcher m;
+        if ((m = QUIT_CMD.matcher(cmd)).matches()) {
+            return handleQuit(out, s);
         }
-
-        switch (session.state) {
-            case AUTHORIZATION:
-                return handleAuthorization(matcher, command, out, session);
-            case TRANSACTION:
-                return handleTransaction(matcher, command, out, session);
+        switch (s.state) {
+            case AUTHORIZATION: return handleAuthorization(cmd, out, s);
+            case TRANSACTION:   return handleTransaction(cmd, out, s);
             default:
                 out.println("-ERR Invalid state");
                 return true;
         }
     }
 
-    private boolean handleAuthorization(Matcher matcher, String command, PrintWriter out, POP3Session session) {
-        if ((matcher = userPattern.matcher(command)).matches()) {
-            String username = matcher.group(1);
-            Path userDir = mailDir.resolve(username);
-
-            if (Files.exists(userDir)) {
-                session.username = username;
-                out.println("+OK User accepted");
-            } else {
-                out.println("-ERR No such user");
-            }
-            return true;
-        } else if ((matcher = passPattern.matcher(command)).matches()) {
-            if (session.username == null) {
-                out.println("-ERR USER command not issued");
-                return true;
-            }
-
+    private boolean handleAuthorization(String cmd, PrintWriter out, POP3Session s) {
+        Matcher m;
+        if ((m = USER_CMD.matcher(cmd)).matches()) {
+            s.username = m.group(1);
+            out.println("+OK User accepted");
+        } else if ((m = PASS_CMD.matcher(cmd)).matches()) {
             try {
                 Registry registry = LocateRegistry.getRegistry("localhost", 1099);
-                AuthService authService = (AuthService) registry.lookup("AuthService");
-
-                if (authService.authenticate(session.username, matcher.group(1))) {
-                    session.state = State.TRANSACTION;
-                    session.messages = loadMessages(session.username);
+                AuthService auth = (AuthService) registry.lookup("AuthService");
+                if (auth.authenticate(s.username, m.group(1))) {
+                    s.state = State.TRANSACTION;
+                    s.messages = loadMessages(s.username);
                     out.println("+OK Mailbox locked and ready");
                 } else {
                     out.println("-ERR Invalid password");
                 }
             } catch (Exception e) {
-                out.println("-ERR Authentication service unavailable");
+                System.err.println("POP3 auth lookup failed: " + e);
+                out.println("-ERR Auth service unavailable");
             }
-            return true;
         } else {
-            out.println("-ERR Command not allowed in current state");
-            return true;
+            out.println("-ERR Command not allowed in AUTHORIZATION");
         }
+        return true;
     }
 
-    private boolean handleTransaction(Matcher matcher, String command, PrintWriter out, POP3Session session) {
-        if ((matcher = statPattern.matcher(command)).matches()) {
-            long totalSize = session.messages.stream()
-                    .filter(msg -> !session.deletedMessages.contains(msg))
-                    .mapToLong(p -> p.toFile().length())
+    private boolean handleTransaction(String cmd, PrintWriter out, POP3Session s) {
+        Matcher m;
+        if (STAT_CMD.matcher(cmd).matches()) {
+            long count = s.messages.size() - s.deletions.size();
+            long totalSize = s.messages.stream()
+                    .filter(r -> !s.deletions.contains(r.email_id))
+                    .mapToLong(r -> r.size)
                     .sum();
-            out.println("+OK " + session.messages.size() + " " + totalSize);
-            return true;
-        } else if ((matcher = listPattern.matcher(command)).matches()) {
-            return handleList(matcher, out, session);
-        } else if ((matcher = retrPattern.matcher(command)).matches()) {
-            return handleRetr(matcher, out, session);
-        } else if ((matcher = delePattern.matcher(command)).matches()) {
-            return handleDele(matcher, out, session);
-        } else if ((matcher = noopPattern.matcher(command)).matches()) {
+            out.println("+OK " + count + " " + totalSize);
+
+        } else if ((m = LIST_CMD.matcher(cmd)).matches()) {
+            if (m.group(1) == null) {
+                s.messages.forEach(r -> {
+                    if (!s.deletions.contains(r.email_id)) out.println(r.email_id + " " + r.size);
+                });
+                out.println(".");
+            } else {
+                long email_id = Long.parseLong(m.group(1));
+                s.messages.stream()
+                        .filter(r -> r.email_id == email_id && !s.deletions.contains(r.email_id))
+                        .findFirst()
+                        .ifPresentOrElse(
+                                r -> out.println("+OK " + r.email_id + " " + r.size),
+                                () -> out.println("-ERR No such message")
+                        );
+            }
+
+        } else if ((m = RETR_CMD.matcher(cmd)).matches()) {
+            long email_id = Long.parseLong(m.group(1));
+            s.messages.stream()
+                    .filter(r -> r.email_id == email_id && !s.deletions.contains(r.email_id))
+                    .findFirst()
+                    .ifPresentOrElse(r -> {
+                        out.println("+OK " + r.size + " octets");
+                        out.println(r.content);
+                        out.println(".");
+                    }, () -> out.println("-ERR No such message"));
+
+        } else if ((m = DELE_CMD.matcher(cmd)).matches()) {
+            long email_id = Long.parseLong(m.group(1));
+            s.deletions.add(email_id);
+            out.println("+OK Message " + email_id + " marked for deletion");
+
+        } else if (NOOP_CMD.matcher(cmd).matches()) {
             out.println("+OK");
-            return true;
-        } else if ((matcher = rsetPattern.matcher(command)).matches()) {
-            session.deletedMessages.clear();
-            out.println("+OK Reset complete");
-            return true;
+
+        } else if (RSET_CMD.matcher(cmd).matches()) {
+            s.deletions.clear();
+            out.println("+OK Reset");
+
         } else {
             out.println("-ERR Unknown command");
-            return true;
         }
+        return true;
     }
 
-    private boolean handleList(Matcher matcher, PrintWriter out, POP3Session session) {
-        try {
-            if (matcher.group(1) == null) {
-                // List all messages
-                for (int i = 0; i < session.messages.size(); i++) {
-                    if (!session.deletedMessages.contains(session.messages.get(i))) {
-                        out.println((i + 1) + " " + Files.size(session.messages.get(i)));
+    private List<EmailRecord> loadMessages(String username) {
+        List<EmailRecord> list = new ArrayList<>();
+        // Changed to only load messages where is_deleted = 0
+        String sql = "SELECT email_id, content, LENGTH(content) as size FROM emails " +
+                "WHERE recipient = ? AND is_deleted = 0 ORDER BY date_sent";
+        try (Connection c = DBUtil.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, username);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    EmailRecord r = new EmailRecord();
+                    r.email_id = rs.getLong("email_id");
+                    r.content = rs.getString("content");
+                    r.size = rs.getLong("size");
+                    list.add(r);
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Failed to load messages: " + e.getMessage());
+            e.printStackTrace();
+        }
+        System.out.println("Loaded " + list.size() + " messages for user " + username);
+        return list;
+    }
+
+    private boolean handleQuit(PrintWriter out, POP3Session s) {
+        if (s.state == State.TRANSACTION && !s.deletions.isEmpty()) {
+            String sql = "UPDATE emails SET is_deleted = 1 WHERE email_id = ? AND is_deleted = 0";
+            try (Connection c = DBUtil.getConnection()) {
+                c.setAutoCommit(false);
+                try (PreparedStatement ps = c.prepareStatement(sql)) {
+                    for (Long email_id : s.deletions) {
+                        ps.setLong(1, email_id);
+                        ps.addBatch();
                     }
+                    int[] results = ps.executeBatch();
+                    c.commit();
+                    int successCount = Arrays.stream(results).sum();
+                    System.out.println("Successfully marked " + successCount + " messages as deleted");
+                    if (successCount == s.deletions.size()) {
+                        out.println("+OK Goodbye");
+                    } else {
+                        out.println("+OK Some messages couldn't be deleted");
+                    }
+                } catch (SQLException e) {
+                    c.rollback();
+                    System.err.println("POP3 delete batch failed: " + e.getMessage());
+                    out.println("-ERR Could not delete messages");
                 }
-                out.println(".");
-            } else {
-                // List specific message
-                int msgNum = Integer.parseInt(matcher.group(1));
-                if (msgNum < 1 || msgNum > session.messages.size()) {
-                    out.println("-ERR No such message");
-                } else if (session.deletedMessages.contains(session.messages.get(msgNum - 1))) {
-                    out.println("-ERR Message marked for deletion");
-                } else {
-                    out.println("+OK " + msgNum + " " + Files.size(session.messages.get(msgNum - 1)));
-                }
-            }
-            return true;
-        } catch (IOException | NumberFormatException e) {
-            out.println("-ERR Error processing request");
-            return true;
-        }
-    }
-
-    private boolean handleRetr(Matcher matcher, PrintWriter out, POP3Session session) {
-        try {
-            int msgNum = Integer.parseInt(matcher.group(1));
-            if (msgNum < 1 || msgNum > session.messages.size()) {
-                out.println("-ERR No such message");
-            } else if (session.deletedMessages.contains(session.messages.get(msgNum - 1))) {
-                out.println("-ERR Message marked for deletion");
-            } else {
-                String content = Files.readString(session.messages.get(msgNum - 1));
-                out.println("+OK " + content.length() + " octets");
-                out.println(content);
-                out.println(".");
-            }
-            return true;
-        } catch (IOException | NumberFormatException e) {
-            out.println("-ERR Error retrieving message");
-            return true;
-        }
-    }
-
-    private boolean handleDele(Matcher matcher, PrintWriter out, POP3Session session) {
-        try {
-            int msgNum = Integer.parseInt(matcher.group(1));
-            if (msgNum < 1 || msgNum > session.messages.size()) {
-                out.println("-ERR No such message");
-            } else {
-                session.deletedMessages.add(session.messages.get(msgNum - 1));
-                out.println("+OK Message " + msgNum + " marked for deletion");
-            }
-            return true;
-        } catch (NumberFormatException e) {
-            out.println("-ERR Invalid message number");
-            return true;
-        }
-    }
-
-    private boolean handleQuit(PrintWriter out, POP3Session session) {
-        if (session.state == State.TRANSACTION) {
-            try {
-                // Actually delete marked messages
-                for (Path message : session.deletedMessages) {
-                    Files.deleteIfExists(message);
-                }
-                out.println("+OK Goodbye");
-            } catch (IOException e) {
-                out.println("-ERR Error deleting messages");
+            } catch (SQLException e) {
+                System.err.println("Database connection error: " + e.getMessage());
+                out.println("-ERR Server error");
             }
         } else {
             out.println("+OK Goodbye");
@@ -232,24 +216,16 @@ public class POP3Server {
         return false;
     }
 
-    private List<Path> loadMessages(String username) throws IOException {
-        Path userDir = mailDir.resolve(username);
-        if (!Files.exists(userDir)) {
-            return Collections.emptyList();
-        }
-
-        try (var stream = Files.list(userDir)) {
-            return stream
-                    .filter(p -> p.toString().endsWith(".txt"))
-                    .sorted()
-                    .toList();
-        }
-    }
-
     private static class POP3Session {
         String username;
         State state = State.AUTHORIZATION;
-        List<Path> messages = Collections.emptyList();
-        Set<Path> deletedMessages = new HashSet<>();
+        List<EmailRecord> messages = new ArrayList<>();
+        Set<Long> deletions = new HashSet<>();
+    }
+
+    private static class EmailRecord {
+        long email_id;
+        String content;
+        long size;
     }
 }
